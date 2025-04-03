@@ -1,0 +1,103 @@
+# Reference: <https://postmarketos.org/devicepkg>
+pkgname=device-samsung-goyavewifi
+pkgdesc="Samsung Galaxy Tab 3 Lite"
+pkgver=3
+pkgrel=0
+url="https://postmarketos.org"
+license="MIT"
+arch="armv7"
+options="!check !archcheck"
+replaces="
+	soc-sprd-audio
+	pulseaudio
+"
+depends="
+	linux-samsung-goyavewifi
+	mkbootimg
+	msm-fb-refresher
+	postmarketos-base
+	soc-sprd-audio-sc8830
+"
+makedepends="devicepkg-dev"
+source="
+	deviceinfo
+	10-logind-check-graphical.conf
+	00-touch-rotation-fix.conf
+	audio/asound.conf
+	audio/default.pa
+	firmware/bcmdhd_mfg.bin
+	firmware/bcmdhd_apsta.bin
+	firmware/bcmdhd_sta.bin
+	firmware/nvram_net.txt
+	firmware/nvram_mfg.txt
+	firmware/p2p_supplicant_overlay.conf
+	firmware/wpa_supplicant.conf
+	firmware/wpa_supplicant_overlay.conf
+"
+
+subpackages="
+	$pkgname-x11
+	$pkgname-nonfree-firmware:nonfree_firmware
+"
+
+build() {
+	devicepkg_build $startdir $pkgname
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+
+	# Audio fix
+	install -Dm644 "$srcdir"/asound.conf "$pkgdir"/etc/asound.conf
+	install -Dm644 "$srcdir"/default.pa "$pkgdir"/etc/pulse/default.pa
+}
+
+x11() {
+
+	install_if="$pkgname=$pkgver-r$pkgrel xorg-server"
+
+	# No GPU workaround
+	install -Dm644 "$srcdir"/10-logind-check-graphical.conf \
+	-t "$subpkgdir"/usr/share/lightdm/lightdm.conf.d
+
+	# Touch fix
+	mkdir -p "$pkgdir"/etc/X11/xorg.conf.d
+	install -Dm644 "$srcdir"/00-touch-rotation-fix.conf "$pkgdir"/etc/X11/xorg.conf.d
+
+}
+
+nonfree_firmware() {
+	pkgdesc="WiFi and Bluetooth Firmware"
+	depends="firmware-aosp-broadcom-wlan"
+
+	mkdir "$subpkgdir"
+	mkdir "$subpkgdir/system"
+	mkdir "$subpkgdir/system/etc"
+	mkdir "$subpkgdir/system/etc/wifi"
+	cd "$srcdir"
+
+	install -Dm664 "bcmdhd_mfg.bin" "$subpkgdir"/system/etc/wifi/bcmdhd_mfg.bin
+	install -Dm664 "bcmdhd_sta.bin" "$subpkgdir"/system/etc/wifi/bcmdhd_sta.bin
+	install -Dm664 "bcmdhd_apsta.bin" "$subpkgdir"/system/etc/wifi/bcmdhd_apsta.bin
+	install -Dm664 "nvram_net.txt" "$subpkgdir"/system/etc/wifi/nvram_net.txt
+	install -Dm664 "nvram_mfg.txt" "$subpkgdir"/system/etc/wifi/nvram_mfg.txt
+	install -Dm664 "p2p_supplicant_overlay.conf" "$subpkgdir"/system/etc/wifi/p2p_supplicant_overlay.conf
+	install -Dm664 "wpa_supplicant.conf" "$subpkgdir"/system/etc/wifi/wpa_supplicant.conf
+	install -Dm664 "wpa_supplicant_overlay.conf" "$subpkgdir"/system/etc/wifi/wpa_supplicant_overlay.conf
+}
+
+sha512sums="
+11380f9ff5382e5e0ccc6dff62048ef6e1d2ea3626311217a6f41b3c2c502cd5a380bbe2fd8f9a064bc381b6c2e3fb74501dfc95f3e415ece2073ad0883d4e17  deviceinfo
+00addbea452dd3e2cb90e18793becc47d22118e6b99a79b76eb57db02aa8b00b133569beaea81cce4b39c9e556280c1d6ac8ab687016354e2d189734e38768cf  10-logind-check-graphical.conf
+f5a12dfaed787e82c3c0cd533e89bc9e482e17aa01943db4d6b694651515be5ea7b8367ec7cbfe2f3ed506a5d6e27276248c5043dcb82db6d3b2974371a88abb  00-touch-rotation-fix.conf
+be3dac5bdb6df11bcbed2b43e0d505a4c4a0a17995ced7fde376e1a8ec85d1a24549b392b5756844bea663522c5bdcf021752094c7ad6b57f62fb410beff017f  asound.conf
+ed1a5330d4a8a33115823a1b1d01f14c42bb770644ac930676f30dd4c09d99b02e5817111b57266f8f1ec6fad132b4744769bcede499aa4f8a7c5ff6c875e874  default.pa
+8390681640f3b9e1b5369b1a2cfd4132214b9df63b2bb7c20a94fa3614f0600623ec2ec783165880e023b0bd488ab21856aad1f7113757fcf9d6f0332dd59dce  bcmdhd_mfg.bin
+4ba3a492c10ffe9cfb5b629f69c3e85e4a686bbe0909c2e08487de79c734e93515891f1f5867d3dd1a542026c6a545538ed067e5303a06d9dc9334f986b64318  bcmdhd_apsta.bin
+45d5d59ae5832edaf8037ee2f6a6a33292605606b4faa4b7a7d202eba72c8d30cd998ff9b75685cf0a8cdc10a98ab1009f9d09e8ca8c728d07028d945a48fec7  bcmdhd_sta.bin
+b5ca2e1f096e45b484bd87c7e82dbf77ade0cf4f6aa747ec74c73994ced5ab795a2fd29d693c392b1c99c5d1c7856ccdac155374cb866db1a76a5bbc3995a778  nvram_net.txt
+1ebc8fa208478c97c3e0577b788597651fe2221267c01bf9a1977b4c73d204218e89e26be50c5851caf35e619547ba3e240540d2f38a7eefd4a968799a346a1b  nvram_mfg.txt
+19b6ead8fb18010079e439eeaa2cf4a8be3ff988c39792ed09d3e1df4714ada056d55317c57122b4a0fe054f2ab8a00ee5e6248ada91f69314dee68d091c8695  p2p_supplicant_overlay.conf
+58a01b3b5b1a1a1ac3eafc0eb8cff2bbd04a4112ac7b4ddd796a05d1fed4230764765b452e73981a3e81e16040a5baa801c5c491c83cc3738ca30be5d2903588  wpa_supplicant.conf
+a7eaf5d18c0591f117c076478cea39a0f35c0c23114b4144d064cff3dbb5c24d66d1d5c353b57a5be8164e51977b0a2e1ba60ef7fc39010a5e41800dc47c4603  wpa_supplicant_overlay.conf
+"
