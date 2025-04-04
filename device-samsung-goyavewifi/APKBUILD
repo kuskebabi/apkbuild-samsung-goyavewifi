@@ -7,10 +7,12 @@ url="https://postmarketos.org"
 license="MIT"
 arch="armv7"
 options="!check !archcheck"
+
 replaces="
 	soc-sprd-audio
 	pulseaudio
 "
+
 depends="
 	linux-samsung-goyavewifi
 	mkbootimg
@@ -66,9 +68,8 @@ x11() {
 
 }
 
-nonfree_firmware() {
-	pkgdesc="WiFi and Bluetooth Firmware"
-	depends="firmware-aosp-broadcom-wlan"
+nonfree_firmware() { #broadcom-aosp-wlan didn't work.
+	pkgdesc="WiFi Firmware"
 
 	mkdir "$subpkgdir"
 	mkdir "$subpkgdir/system"
