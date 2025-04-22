@@ -1,0 +1,260 @@
+diff --git a/fs/fcntl.c b/fs/fcntl.c
+index 65992225..95900d24 100644
+--- a/fs/fcntl.c
++++ b/fs/fcntl.c
+@@ -21,6 +21,7 @@
+ #include <linux/rcupdate.h>
+ #include <linux/pid_namespace.h>
+ #include <linux/user_namespace.h>
++#include <linux/shmem_fs.h>
+ 
+ #include <asm/poll.h>
+ #include <asm/siginfo.h>
+@@ -327,6 +328,10 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
+ 	case F_GETPIPE_SZ:
+ 		err = pipe_fcntl(filp, cmd, arg);
+ 		break;
++	case F_ADD_SEALS:
++			case F_GET_SEALS:
++				err = shmem_fcntl(filp, cmd, arg);
++				break;
+ 	default:
+ 		break;
+ 	}
+diff --git a/include/linux/shmem_fs.h b/include/linux/shmem_fs.h
+index 30aa0dc6..3fa0707b 100644
+--- a/include/linux/shmem_fs.h
++++ b/include/linux/shmem_fs.h
+@@ -1,6 +1,7 @@
+ #ifndef __SHMEM_FS_H
+ #define __SHMEM_FS_H
+ 
++#include <linux/file.h>
+ #include <linux/swap.h>
+ #include <linux/mempolicy.h>
+ #include <linux/pagemap.h>
+@@ -12,6 +13,7 @@
+ struct shmem_inode_info {
+ 	spinlock_t		lock;
+ 	unsigned long		flags;
++	unsigned int		seals;		/* shmem seals */
+ 	unsigned long		alloced;	/* data pages alloced to file */
+ 	union {
+ 		unsigned long	swapped;	/* subtotal assigned to swap */
+@@ -61,5 +63,19 @@ static inline struct page *shmem_read_mapping_page(
+ 	return shmem_read_mapping_page_gfp(mapping, index,
+ 					mapping_gfp_mask(mapping));
+ }
++#ifdef CONFIG_TMPFS
++
++extern int shmem_add_seals(struct file *file, unsigned int seals);
++extern int shmem_get_seals(struct file *file);
++extern long shmem_fcntl(struct file *file, unsigned int cmd, unsigned long arg);
++
++#else
++
++static inline long shmem_fcntl(struct file *f, unsigned int c, unsigned long a)
++{
++		return -EINVAL;
++	}
++
++	#endif
+ 
+ #endif
+diff --git a/include/uapi/linux/fcntl.h b/include/uapi/linux/fcntl.h
+index 074b886c..1c6a4fa5 100644
+--- a/include/uapi/linux/fcntl.h
++++ b/include/uapi/linux/fcntl.h
+@@ -27,6 +27,22 @@
+ #define F_SETPIPE_SZ	(F_LINUX_SPECIFIC_BASE + 7)
+ #define F_GETPIPE_SZ	(F_LINUX_SPECIFIC_BASE + 8)
+ 
++/*
++ * * Set/Get seals
++ * */
++#define F_ADD_SEALS    (F_LINUX_SPECIFIC_BASE + 9)
++#define F_GET_SEALS    (F_LINUX_SPECIFIC_BASE + 10)
++
++/*
++ * Types of seals
++ */
++#define F_SEAL_SEAL    0x0001  /* prevent further seals from being set */
++#define F_SEAL_SHRINK  0x0002  /* prevent file from shrinking */
++#define F_SEAL_GROW    0x0004  /* prevent file from growing */
++#define F_SEAL_WRITE   0x0008  /* prevent writes */
++/* (1U << 31) is reserved for signed error codes */
++
++
+ /*
+  * Types of directory notifications that may be requested.
+  */
+diff --git a/mm/shmem.c b/mm/shmem.c
+index 67100475..d17623dd 100644
+--- a/mm/shmem.c
++++ b/mm/shmem.c
+@@ -66,6 +66,7 @@ static struct vfsmount *shm_mnt;
+ #include <linux/highmem.h>
+ #include <linux/seq_file.h>
+ #include <linux/magic.h>
++#include <linux/fcntl.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+@@ -596,6 +597,7 @@ EXPORT_SYMBOL_GPL(shmem_truncate_range);
+ static int shmem_setattr(struct dentry *dentry, struct iattr *attr)
+ {
+ 	struct inode *inode = dentry->d_inode;
++	struct shmem_inode_info *info = SHMEM_I(inode);
+ 	int error;
+ 
+ 	error = inode_change_ok(inode, attr);
+@@ -606,6 +608,12 @@ static int shmem_setattr(struct dentry *dentry, struct iattr *attr)
+ 		loff_t oldsize = inode->i_size;
+ 		loff_t newsize = attr->ia_size;
+ 
++		/* protected by i_mutex */
++				if ((newsize < oldsize && (info->seals & F_SEAL_SHRINK)) ||
++				    (newsize > oldsize && (info->seals & F_SEAL_GROW)))
++					return -EPERM;
++
++
+ 		if (newsize != oldsize) {
+ 			i_size_write(inode, newsize);
+ 			inode->i_ctime = inode->i_mtime = CURRENT_TIME;
+@@ -1391,6 +1399,7 @@ static struct inode *shmem_get_inode(struct super_block *sb, const struct inode
+ 		info = SHMEM_I(inode);
+ 		memset(info, 0, (char *)inode - (char *)info);
+ 		spin_lock_init(&info->lock);
++		info->seals = F_SEAL_SEAL;
+ 		info->flags = flags & VM_NORESERVE;
+ 		INIT_LIST_HEAD(&info->swaplist);
+ 		simple_xattrs_init(&info->xattrs);
+@@ -1444,7 +1453,16 @@ shmem_write_begin(struct file *file, struct address_space *mapping,
+ 			struct page **pagep, void **fsdata)
+ {
+ 	struct inode *inode = mapping->host;
++	struct shmem_inode_info *info = SHMEM_I(inode);
+ 	pgoff_t index = pos >> PAGE_CACHE_SHIFT;
++	/* i_mutex is held by caller */
++	if (unlikely(info->seals)) {
++		if (info->seals & F_SEAL_WRITE)
++			return -EPERM;
++		if ((info->seals & F_SEAL_GROW) && pos + len > inode->i_size)
++			return -EPERM;
++	}
++
+ 	return shmem_getpage(inode, index, pagep, SGP_WRITE, NULL);
+ }
+ 
+@@ -1916,6 +1934,111 @@ out:
+ 	return error;
+ }
+ 
++static int shmem_wait_for_pins(struct address_space *mapping)
++{
++	return 0;
++}
++
++#define F_ALL_SEALS (F_SEAL_SEAL | \
++				F_SEAL_SHRINK | \
++				F_SEAL_GROW | \
++				F_SEAL_WRITE)
++
++int shmem_add_seals(struct file *file, unsigned int seals)
++{
++	struct inode *inode = file_inode(file);
++	struct shmem_inode_info *info = SHMEM_I(inode);
++	int error;
++
++	/*
+++	 * SEALING
+++	 * Sealing allows multiple parties to share a shmem-file but restrict
+++	 * access to a specific subset of file operations. Seals can only be
+++	 * added, but never removed. This way, mutually untrusted parties can
+++	 * share common memory regions with a well-defined policy. A malicious
+++	 * peer can thus never perform unwanted operations on a shared object.
+++	 *
+++	 * Seals are only supported on special shmem-files and always affect
+++	 * the whole underlying inode. Once a seal is set, it may prevent some
+++	 * kinds of access to the file. Currently, the following seals are
+++	 * defined:
+++	 *   SEAL_SEAL: Prevent further seals from being set on this file
+++	 *   SEAL_SHRINK: Prevent the file from shrinking
+++	 *   SEAL_GROW: Prevent the file from growing
+++	 *   SEAL_WRITE: Prevent write access to the file
+++	 *
+++	 * As we don't require any trust relationship between two parties, we
+++	 * must prevent seals from being removed. Therefore, sealing a file
+++	 * only adds a given set of seals to the file, it never touches
+++	 * existing seals. Furthermore, the "setting seals"-operation can be
+++	 * sealed itself, which basically prevents any further seal from being
+++	 * added.
+++	 *
+++	 * Semantics of sealing are only defined on volatile files. Only
+++	 * anonymous shmem files support sealing. More importantly, seals are
+++	 * never written to disk. Therefore, there's no plan to support it on
+++	 * other file types.
+++	 */
++
++	if (file->f_op != &shmem_file_operations)
++		return -EINVAL;
++	if (!(file->f_mode & FMODE_WRITE))
++		return -EPERM;
++	if (seals & ~(unsigned int)F_ALL_SEALS)
++		return -EINVAL;
++
++	mutex_lock(&inode->i_mutex);
++
++	if (info->seals & F_SEAL_SEAL) {
++		error = -EPERM;
++		goto unlock;
++	}
++
++	/* TODO: this is the place to actually apply seals to
++		* file->f_mapping, but this was not backported yet */
++
++	info->seals |= seals;
++	error = 0;
++
++unlock:
++	mutex_unlock(&inode->i_mutex);
++	return error;
++}
++EXPORT_SYMBOL_GPL(shmem_add_seals);
++
++int shmem_get_seals(struct file *file)
++{
++	if (file->f_op != &shmem_file_operations)
++		return -EINVAL;
++
++	return SHMEM_I(file_inode(file))->seals;
++}
++EXPORT_SYMBOL_GPL(shmem_get_seals);
++
++long shmem_fcntl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++	long error;
++
++	switch (cmd) {
++		case F_ADD_SEALS:
++			/* disallow upper 32bit */
++			if (arg > UINT_MAX)
++				return -EINVAL;
++
++			error = shmem_add_seals(file, arg);
++			break;
++		case F_GET_SEALS:
++			error = shmem_get_seals(file);
++			break;
++		default:
++			error = -EINVAL;
++			break;
++		}
++
++		return error;
++}
++
++
+ static int shmem_statfs(struct dentry *dentry, struct kstatfs *buf)
+ {
+ 	struct shmem_sb_info *sbinfo = SHMEM_SB(dentry->d_sb);
