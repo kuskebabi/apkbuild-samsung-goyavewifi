@@ -18,13 +18,13 @@ depends="
 	mkbootimg
 	msm-fb-refresher
 	postmarketos-base
+	postmarketos-base-downstream
 	soc-sprd-audio-sc8830
 "
 makedepends="devicepkg-dev"
 source="
 	deviceinfo
-	10-logind-check-graphical.conf
-	00-touch-rotation-fix.conf
+	udev/00-touchscreen-dev.rules
 	audio/asound.conf
 	audio/default.pa
 	firmware/bcmdhd_mfg.bin
@@ -38,7 +38,6 @@ source="
 "
 
 subpackages="
-	$pkgname-x11
 	$pkgname-nonfree-firmware:nonfree_firmware
 "
 
@@ -52,20 +51,9 @@ package() {
 	# Audio fix
 	install -Dm644 "$srcdir"/asound.conf "$pkgdir"/etc/asound.conf
 	install -Dm644 "$srcdir"/default.pa "$pkgdir"/etc/pulse/default.pa
-}
 
-x11() {
-
-	install_if="$pkgname=$pkgver-r$pkgrel xorg-server"
-
-	# No GPU workaround
-	install -Dm644 "$srcdir"/10-logind-check-graphical.conf \
-	-t "$subpkgdir"/usr/share/lightdm/lightdm.conf.d
-
-	# Touch fix
-	mkdir -p "$pkgdir"/etc/X11/xorg.conf.d
-	install -Dm644 "$srcdir"/00-touch-rotation-fix.conf "$pkgdir"/etc/X11/xorg.conf.d
-
+	# Udev rules
+	install -D -m644 "$srcdir"/00-touchscreen-dev.rules "$pkgdir"/etc/udev/rules.d/00-touchscreen-dev.rules
 }
 
 nonfree_firmware() { #broadcom-aosp-wlan didn't work.
@@ -89,8 +77,7 @@ nonfree_firmware() { #broadcom-aosp-wlan didn't work.
 
 sha512sums="
 11380f9ff5382e5e0ccc6dff62048ef6e1d2ea3626311217a6f41b3c2c502cd5a380bbe2fd8f9a064bc381b6c2e3fb74501dfc95f3e415ece2073ad0883d4e17  deviceinfo
-00addbea452dd3e2cb90e18793becc47d22118e6b99a79b76eb57db02aa8b00b133569beaea81cce4b39c9e556280c1d6ac8ab687016354e2d189734e38768cf  10-logind-check-graphical.conf
-f5a12dfaed787e82c3c0cd533e89bc9e482e17aa01943db4d6b694651515be5ea7b8367ec7cbfe2f3ed506a5d6e27276248c5043dcb82db6d3b2974371a88abb  00-touch-rotation-fix.conf
+e4803d45edcb6ff42a6673acc33121c48e93c61437e4674712d2f893d2a9eb8df90bac939522d428da4e9f7ddbc7b150d5700652fefa1d0c6025639661a68c42  00-touchscreen-dev.rules
 be3dac5bdb6df11bcbed2b43e0d505a4c4a0a17995ced7fde376e1a8ec85d1a24549b392b5756844bea663522c5bdcf021752094c7ad6b57f62fb410beff017f  asound.conf
 ed1a5330d4a8a33115823a1b1d01f14c42bb770644ac930676f30dd4c09d99b02e5817111b57266f8f1ec6fad132b4744769bcede499aa4f8a7c5ff6c875e874  default.pa
 8390681640f3b9e1b5369b1a2cfd4132214b9df63b2bb7c20a94fa3614f0600623ec2ec783165880e023b0bd488ab21856aad1f7113757fcf9d6f0332dd59dce  bcmdhd_mfg.bin
